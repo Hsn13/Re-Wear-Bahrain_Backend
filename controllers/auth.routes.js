@@ -1,45 +1,50 @@
 const router = require('express').Router()
 const bcrypt = require('bcrypt')
-const User = require('../models/User')
+const UserModel = require('../models/User')
+const User = UserModel
+const { BAHRAIN_NEIGHBORHOODS } = UserModel
 const jwt = require('jsonwebtoken')
 
 // POST /auth/sign-up
-router.post('/sign-up', async (req,res)=>{
+router.post('/sign-up', async (req, res) => {
+  try {
+    const { username, password, neighborhood, coordinates } = req.body
 
-    try{
-            // 1. verify that the username doesn't already exist in the Database
-    const foundUser = await User.findOne({username:req.body.username})
-
-    if(foundUser){
-        return res.status(409).json({err:'Username taken please sign in or Sign up with different username'})
+    // 1. Verify the username is not already taken
+    const foundUser = await User.findOne({ username })
+    if (foundUser) {
+      return res.status(409).json({ err: 'Username taken. Please sign in or choose a different username.' })
     }
 
-    // 1.5: validation for password length and characters
-    // Uncomment this if you want to enforce password with 1 letter, 1 number, 8 characters minimum
-/*     const regexString = '^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,}$'
+    // 2. Validate the neighborhood if provided
+    if (neighborhood && !BAHRAIN_NEIGHBORHOODS.includes(neighborhood)) {
+      return res.status(400).json({ err: `Invalid neighborhood. Valid options: ${BAHRAIN_NEIGHBORHOODS.join(', ')}` })
+    }
 
-    if (!req.body.password.match(new RegExp(regexString))) {
-        return res.status(400).json({
-            err: 'Password must be minimum 8 characters, include at least one letter and one number'
-        })
-    } */
+    // 3. Build the location object
+    // coordinates from frontend should be [longitude, latitude] (GeoJSON order)
+    const location = {
+      type: 'Point',
+      coordinates: coordinates && coordinates.length === 2 ? coordinates : [50.5860, 26.2154],
+      neighborhood: neighborhood || 'Manama'
+    }
 
-    // 2. save the user in the Database with the encrypted password
+    // 4. Create the user with 100 starter eco-credits
     const createdUser = await User.create({
-        username: req.body.username,
-        hashedPassword: bcrypt.hashSync(req.body.password,12)
+      username,
+      hashedPassword: bcrypt.hashSync(password, 12),
+      ecoCredits: 100,
+      location
     })
 
     const userObject = createdUser.toObject()
     delete userObject.hashedPassword
-    // 3. send back the created user
-    res.status(201).json({user:userObject})
 
-    }
-    catch(err){
-        console.log(err)
-        res.status(500).json({err:err.message})
-    }
+    res.status(201).json({ user: userObject })
+  } catch (err) {
+    console.log(err)
+    res.status(500).json({ err: err.message })
+  }
 })
 
 // POST /auth/login

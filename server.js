@@ -6,6 +6,9 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const logger = require('morgan');
 const authRouter = require('./controllers/auth.routes');
+const itemsRouter = require('./controllers/items.routes');
+const swapsRouter = require('./controllers/swaps.routes');
+const usersRouter = require('./controllers/users.routes');
 const verifyToken = require('./middleware/verify-token');
 
 
@@ -21,6 +24,9 @@ app.use(logger('dev'));
 
 // Routes go here
 app.use('/auth', authRouter);
+app.use('/items', itemsRouter);
+app.use('/swaps', swapsRouter);
+app.use('/users', usersRouter);
 
 
 app.listen(3000, () => {
