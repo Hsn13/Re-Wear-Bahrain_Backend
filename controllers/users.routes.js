@@ -19,16 +19,32 @@ router.get('/me/profile', verifyToken, async (req, res) => {
   }
 })
 
-// PATCH /users/me/location — update logged-in user's neighborhood
+// PATCH /users/me/location — update logged-in user's neighbourhood
 router.patch('/me/location', verifyToken, async (req, res) => {
   try {
-    const { neighborhood, coordinates } = req.body
-    if (!BAHRAIN_NEIGHBORHOODS.includes(neighborhood)) {
-      return res.status(400).json({ err: 'Invalid neighborhood' })
+    const { neighborhood, customNeighborhood, coordinates } = req.body
+
+    if (!neighborhood || !BAHRAIN_NEIGHBORHOODS.includes(neighborhood)) {
+      return res.status(400).json({ err: 'Please select a valid neighbourhood' })
     }
+    if (neighborhood === 'Other' && (!customNeighborhood || !customNeighborhood.trim())) {
+      return res.status(400).json({ err: 'Please enter your neighbourhood name' })
+    }
+
+    const location = {
+      type: 'Point',
+      coordinates: Array.isArray(coordinates) && coordinates.length === 2
+        ? coordinates
+        : [50.5860, 26.2154],
+      neighborhood,
+      ...(neighborhood === 'Other' && customNeighborhood
+        ? { customNeighborhood: customNeighborhood.trim() }
+        : { customNeighborhood: undefined })
+    }
+
     const user = await User.findByIdAndUpdate(
       req.user._id,
-      { location: { type: 'Point', coordinates: coordinates || [50.5860, 26.2154], neighborhood } },
+      { location },
       { new: true }
     ).select('-hashedPassword')
     res.json({ user })

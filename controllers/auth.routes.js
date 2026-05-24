@@ -8,30 +8,60 @@ const jwt = require('jsonwebtoken')
 // POST /auth/sign-up
 router.post('/sign-up', async (req, res) => {
   try {
-    const { username, password, neighborhood, coordinates } = req.body
+    const { username, password, neighborhood, customNeighborhood, coordinates } = req.body
 
-    // 1. Verify the username is not already taken
-    const foundUser = await User.findOne({ username })
+    // --- Validate username ---
+    if (!username || typeof username !== 'string' || !username.trim()) {
+      return res.status(400).json({ err: 'Username is required' })
+    }
+    const trimmedUsername = username.trim()
+    if (trimmedUsername.length < 3 || trimmedUsername.length > 30) {
+      return res.status(400).json({ err: 'Username must be 3–30 characters' })
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(trimmedUsername)) {
+      return res.status(400).json({ err: 'Username may only contain letters, numbers and underscores' })
+    }
+
+    // --- Validate password ---
+    if (!password || typeof password !== 'string') {
+      return res.status(400).json({ err: 'Password is required' })
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ err: 'Password must be at least 6 characters' })
+    }
+    if (password.length > 72) {
+      return res.status(400).json({ err: 'Password must be 72 characters or fewer' })
+    }
+
+    // --- Validate neighborhood ---
+    if (!neighborhood || !BAHRAIN_NEIGHBORHOODS.includes(neighborhood)) {
+      return res.status(400).json({ err: 'Please select a valid neighbourhood' })
+    }
+    if (neighborhood === 'Other' && (!customNeighborhood || !customNeighborhood.trim())) {
+      return res.status(400).json({ err: 'Please enter your neighbourhood name' })
+    }
+
+    // --- Check username availability ---
+    const foundUser = await User.findOne({ username: trimmedUsername })
     if (foundUser) {
-      return res.status(409).json({ err: 'Username taken. Please sign in or choose a different username.' })
+      return res.status(409).json({ err: 'Username already taken — please choose another' })
     }
 
-    // 2. Validate the neighborhood if provided
-    if (neighborhood && !BAHRAIN_NEIGHBORHOODS.includes(neighborhood)) {
-      return res.status(400).json({ err: `Invalid neighborhood. Valid options: ${BAHRAIN_NEIGHBORHOODS.join(', ')}` })
-    }
-
-    // 3. Build the location object
-    // coordinates from frontend should be [longitude, latitude] (GeoJSON order)
+    // --- Build location ---
     const location = {
       type: 'Point',
-      coordinates: coordinates && coordinates.length === 2 ? coordinates : [50.5860, 26.2154],
-      neighborhood: neighborhood || 'Manama'
+      coordinates: Array.isArray(coordinates) && coordinates.length === 2
+        ? coordinates
+        : [50.5860, 26.2154],
+      neighborhood,
+      ...(neighborhood === 'Other' && customNeighborhood
+        ? { customNeighborhood: customNeighborhood.trim() }
+        : {})
     }
 
-    // 4. Create the user with 100 starter eco-credits
+    // --- Create user with 100 starter Eco-Credits ---
     const createdUser = await User.create({
-      username,
+      username: trimmedUsername,
       hashedPassword: bcrypt.hashSync(password, 12),
       ecoCredits: 100,
       location
@@ -39,7 +69,6 @@ router.post('/sign-up', async (req, res) => {
 
     const userObject = createdUser.toObject()
     delete userObject.hashedPassword
-
     res.status(201).json({ user: userObject })
   } catch (err) {
     console.log(err)
@@ -47,50 +76,34 @@ router.post('/sign-up', async (req, res) => {
   }
 })
 
-// POST /auth/login
+// POST /auth/sign-in
+router.post('/sign-in', async (req, res) => {
+  try {
+    const { username, password } = req.body
 
-// 1. user sends POST request with username and password to login
-// 2. get the user from db and check if they exist the DB
-// 3. compare the password they give me vs the password in the DB
-// 4. Sign a new JWT token send it back as a response
-
-router.post('/sign-in',async(req,res)=>{
-    try{
-        const { username, password} = req.body // destructure the username and password
-
-        // 2. get the user from db and check if they exist the DB
-
-        const foundUser = await User.findOne({username:username})
-
-        if(!foundUser){
-            return res.status(401).json({err:'username not found, please signup'})
-        }
-
-        // 3. compare the password they give me vs the password in the DB
-
-        const doesPasswordMatch = bcrypt.compareSync(password, foundUser.hashedPassword)
-
-        if(!doesPasswordMatch){
-            return res.status(401).json({err:'username or password incorrect'})
-
-        }
-
-        const payload = foundUser.toObject()
-        delete payload.hashedPassword
-
-        // 4. Sign a new JWT token send it back as a response
-        const token = jwt.sign({payload},process.env.JWT_SECRET,{expiresIn:'24h'})
-
-        res.json({token})
+    if (!username || !password) {
+      return res.status(400).json({ err: 'Username and password are required' })
     }
-    catch(err){
-        console.log(err)
-        res.status(500).json({err:err.message})
+
+    const foundUser = await User.findOne({ username: username.trim() })
+    if (!foundUser) {
+      return res.status(401).json({ err: 'Username or password is incorrect' })
     }
+
+    const doesPasswordMatch = bcrypt.compareSync(password, foundUser.hashedPassword)
+    if (!doesPasswordMatch) {
+      return res.status(401).json({ err: 'Username or password is incorrect' })
+    }
+
+    const payload = foundUser.toObject()
+    delete payload.hashedPassword
+
+    const token = jwt.sign({ payload }, process.env.JWT_SECRET, { expiresIn: '24h' })
+    res.json({ token })
+  } catch (err) {
+    console.log(err)
+    res.status(500).json({ err: err.message })
+  }
 })
-
-
-
-
 
 module.exports = router

@@ -1,10 +1,18 @@
 const mongoose = require('mongoose');
 
 const BAHRAIN_NEIGHBORHOODS = [
-  'Manama', 'Juffair', 'Adliya', 'Seef', 'Sanabis', 'Tubli',
-  'Muharraq', 'Hidd', 'Amwaj Islands',
-  'Riffa', 'Isa Town', 'Hamad Town', 'Saar', 'Budaiya',
-  'Zinj', 'Salmaniya', 'A\'ali', 'Sitra', 'Other'
+  // Capital Governorate
+  'Manama', 'Juffair', 'Adliya', 'Seef', 'Sanabis', 'Zinj', 'Salmaniya',
+  'Hoora', 'Gudaibiya', 'Umm Al Hassam', 'Ras Rumman', 'Karanah', 'Jidd Hafs',
+  // Muharraq Governorate
+  'Muharraq', 'Hidd', 'Amwaj Islands', 'Busaiteen', 'Dair', 'Galali', 'Arad',
+  // Northern Governorate
+  'Saar', 'Budaiya', 'Hamala', 'Janabiyah', 'Barbar', 'Diraz',
+  'Bani Jamra', 'Malkiya', 'Sehla', 'Dumistan', 'Jasra', 'Karbabad', 'Tubli',
+  // Southern Governorate
+  'Riffa', 'East Riffa', 'West Riffa', 'Isa Town', 'Hamad Town',
+  "A'ali", 'Sitra', 'Zallaq', 'Askar', 'Jaw', 'Durrat Al Bahrain',
+  'Other'
 ];
 
 const BADGE_NAMES = ['Eco Starter', 'Green Giver', 'Sustainability Hero', 'Bahrain Eco Champion'];
@@ -17,6 +25,7 @@ const userSchema = new mongoose.Schema(
       unique: true,
       trim: true,
       minlength: 3,
+      maxlength: 30,
     },
     hashedPassword: {
       type: String,
@@ -43,12 +52,17 @@ const userSchema = new mongoose.Schema(
       },
       coordinates: {
         type: [Number],
-        default: [50.5860, 26.2154]  // Manama city center default
+        default: [50.5860, 26.2154]
       },
       neighborhood: {
         type: String,
         enum: BAHRAIN_NEIGHBORHOODS,
         default: 'Manama'
+      },
+      customNeighborhood: {
+        type: String,
+        trim: true,
+        maxlength: 100
       }
     }
   },

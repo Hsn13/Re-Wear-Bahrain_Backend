@@ -3,6 +3,10 @@ const Item = require('../models/Item')
 const User = require('../models/User')
 const verifyToken = require('../middleware/verify-token')
 
+const VALID_CATEGORIES = ['tops', 'bottoms', 'dresses', 'outerwear', 'footwear', 'accessories', 'kids', 'other']
+const VALID_CONDITIONS = ['new', 'like-new', 'good', 'fair']
+const VALID_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'One Size', 'Kids']
+
 // GET /items — browse available items, filter by neighborhood / category
 router.get('/', async (req, res) => {
   try {
@@ -37,24 +41,46 @@ router.get('/:id', async (req, res) => {
 })
 
 // POST /items — create a new listing (protected)
-// Item location is inherited from the owner's saved neighborhood
 router.post('/', verifyToken, async (req, res) => {
   try {
     const { title, description, category, size, condition, images, ecoCreditsPrice, tags } = req.body
+
+    // --- Validate required fields ---
+    if (!title || typeof title !== 'string' || title.trim().length < 3) {
+      return res.status(400).json({ err: 'Title must be at least 3 characters' })
+    }
+    if (title.trim().length > 100) {
+      return res.status(400).json({ err: 'Title must be 100 characters or fewer' })
+    }
+    if (!category || !VALID_CATEGORIES.includes(category)) {
+      return res.status(400).json({ err: 'Please select a valid category' })
+    }
+    if (!condition || !VALID_CONDITIONS.includes(condition)) {
+      return res.status(400).json({ err: 'Please select a valid condition' })
+    }
+    if (size && !VALID_SIZES.includes(size)) {
+      return res.status(400).json({ err: 'Please select a valid size' })
+    }
+    if (ecoCreditsPrice !== undefined) {
+      const price = Number(ecoCreditsPrice)
+      if (isNaN(price) || price < 0 || price > 50) {
+        return res.status(400).json({ err: 'Credits to claim must be between 0 and 50' })
+      }
+    }
 
     const owner = await User.findById(req.user._id)
     if (!owner) return res.status(404).json({ err: 'User not found' })
 
     const item = await Item.create({
       owner: owner._id,
-      title,
-      description,
+      title: title.trim(),
+      description: description ? description.trim() : '',
       category,
-      size,
+      size: size || undefined,
       condition,
-      images: images || [],
-      ecoCreditsPrice: ecoCreditsPrice ?? 10,
-      tags: tags || [],
+      images: Array.isArray(images) ? images.filter(Boolean) : [],
+      ecoCreditsPrice: ecoCreditsPrice !== undefined ? Number(ecoCreditsPrice) : 10,
+      tags: Array.isArray(tags) ? tags : [],
       location: owner.location
     })
 
