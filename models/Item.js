@@ -35,7 +35,11 @@ const itemSchema = new mongoose.Schema(
     },
     images: {
       type: [String],
-      default: []
+      required: true,
+      validate: {
+        validator: images => images.length >= 1 && images.length <= 5,
+        message: 'Listings require 1–5 photos'
+      }
     },
     status: {
       type: String,
@@ -45,7 +49,7 @@ const itemSchema = new mongoose.Schema(
     ecoCreditsPrice: {
       type: Number,
       default: 10,
-      min: 0
+      min: 1
     },
     location: {
       type: {
@@ -61,8 +65,37 @@ const itemSchema = new mongoose.Schema(
         type: String,
         enum: BAHRAIN_NEIGHBORHOODS,
         required: true
+      },
+      customNeighborhood: {
+        type: String,
+        trim: true,
+        maxlength: 100
       }
     },
+    pickupLocation: {
+      type: {
+        type: String,
+        enum: ['public', 'private'],
+        required: true
+      },
+      coordinates: {
+        type: [Number],
+        required: true
+      },
+      address: {
+        type: String,
+        required: true,
+        trim: true,
+        maxlength: 240
+      },
+      instructions: {
+        type: String,
+        trim: true,
+        maxlength: 500,
+        default: ''
+      }
+    },
+    isDemo: { type: Boolean, default: false },
     tags: {
       type: [String],
       default: []
@@ -74,5 +107,6 @@ const itemSchema = new mongoose.Schema(
 itemSchema.index({ location: '2dsphere' });
 itemSchema.index({ status: 1 });
 itemSchema.index({ owner: 1 });
+itemSchema.index({ isDemo: 1 });
 
 module.exports = mongoose.model('Item', itemSchema);

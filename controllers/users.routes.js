@@ -3,9 +3,11 @@ const User = require('../models/User')
 const { BAHRAIN_NEIGHBORHOODS } = User
 const Item = require('../models/Item')
 const verifyToken = require('../middleware/verify-token')
+const createUserToken = require('../utils/create-user-token')
+const { isModerator } = require('./swap-helpers')
+const approximateCoordinates = require('../utils/approximate-coordinates')
+const toPublicItem = require('../utils/public-item')
 
-// GET /users/me/profile — logged-in user's own full profile + listings
-// MUST be defined before /:id or Express will match "me" as a user ID
 router.get('/me/profile', verifyToken, async (req, res) => {
   try {
     const [user, items] = await Promise.all([
@@ -13,13 +15,29 @@ router.get('/me/profile', verifyToken, async (req, res) => {
       Item.find({ owner: req.user._id }).sort({ createdAt: -1 })
     ])
     if (!user) return res.status(404).json({ err: 'User not found' })
-    res.json({ user, items })
+    res.json({ user, items, isModerator: isModerator(req.user._id) })
   } catch (err) {
     res.status(500).json({ err: err.message })
   }
 })
 
-// PATCH /users/me/location — update logged-in user's neighbourhood
+router.patch('/me/adult-confirmation', verifyToken, async (req, res) => {
+  if (req.body.confirmed !== true) {
+    return res.status(400).json({ err: 'Confirm that you are 18 or older.' })
+  }
+  try {
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { adultConfirmedAt: new Date() },
+      { new: true }
+    ).select('-hashedPassword -phoneNumber')
+    if (!user) return res.status(404).json({ err: 'Account not found.' })
+    return res.json({ user, token: createUserToken(user) })
+  } catch {
+    return res.status(500).json({ err: 'Could not update account confirmation.' })
+  }
+})
+
 router.patch('/me/location', verifyToken, async (req, res) => {
   try {
     const { neighborhood, customNeighborhood, coordinates } = req.body
@@ -53,10 +71,10 @@ router.patch('/me/location', verifyToken, async (req, res) => {
   }
 })
 
-// GET /users/:id — public profile with stats
 router.get('/:id', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select('-hashedPassword')
+    const user = await User.findById(req.params.id)
+      .select('username badges itemsGivenCount location.neighborhood location.customNeighborhood')
     if (!user) return res.status(404).json({ err: 'User not found' })
     res.json({ user })
   } catch (err) {
@@ -64,11 +82,19 @@ router.get('/:id', async (req, res) => {
   }
 })
 
-// GET /users/:id/items — all listings by a user
 router.get('/:id/items', async (req, res) => {
   try {
-    const items = await Item.find({ owner: req.params.id }).sort({ createdAt: -1 })
-    res.json({ items })
+    const items = await Item.find({ owner: req.params.id, status: 'available' })
+      .select('-pickupLocation')
+      .sort({ createdAt: -1 })
+    const publicItems = items.map(item => {
+      const result = toPublicItem(item)
+      if (result.location) {
+        result.location.coordinates = approximateCoordinates(result.location.coordinates)
+      }
+      return result
+    })
+    res.json({ items: publicItems })
   } catch (err) {
     res.status(500).json({ err: err.message })
   }

@@ -1,183 +1,72 @@
 # Re-Wear Bahrain — Backend API
 
-A RESTful Express/MongoDB API powering Re-Wear Bahrain, a gamified peer-to-peer circular fashion platform. Users earn **Eco-Credits** by giving clothes away and spend them to claim items from neighbours across Bahrain.
+Express and MongoDB API for Re-Wear BH, a bilingual community fashion exchange. Eco-Credits are non-cash community points: the requester’s credits are reserved when a request is made and transferred to the owner only after both people confirm the real handover.
 
----
+## Requirements and local setup
 
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Runtime | Node.js 24 |
-| Framework | Express 5 |
-| Database | MongoDB Atlas (Mongoose 8) |
-| Auth | JWT (jsonwebtoken) + bcrypt |
-| File Uploads | multer (local disk storage) |
-| Environment | dotenv |
-
----
-
-## Quick Start
+Use Node.js 20.19+ (or 22.12+) and a MongoDB replica set. Swap creation, cancellation, dispute resolution, and settlement use MongoDB transactions; a standalone MongoDB server is not sufficient.
 
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. Create .env file (see section below)
-
-# 3. Seed the database with sample Bahraini users & items
-node seed.js
-
-# 4. Start the server (port 3000)
-npm start
+# Configure the environment below, then:
+npm run dev
 ```
 
----
+The API listens on port `3000` by default. `npm start` runs it without watch mode, and `npm test` runs the credit policy and schema tests.
 
-## Environment Variables
+## Configuration
 
-Create a `.env` file in the project root:
+Set these values in the deployment environment or a local, untracked `.env` file:
 
-```env
-MONGODB_URI=mongodb://your-host/ReWearBhDataBase
-JWT_SECRET=your-super-secret-key
-```
+| Variable | Required | Purpose |
+|---|---|---|
+| `MONGODB_URI` | Yes | Replica-set MongoDB connection string |
+| `JWT_SECRET` | Yes | Signing key of at least 32 characters |
+| `CLIENT_ORIGINS` | Production | Comma-separated exact frontend origins; defaults to `http://localhost:5173` |
+| `PUBLIC_API_URL` | Production | Public HTTPS API origin used to generate upload URLs |
+| `TWILIO_ACCOUNT_SID` | For phone verification | Twilio account SID |
+| `TWILIO_AUTH_TOKEN` | For phone verification | Twilio auth token |
+| `TWILIO_VERIFY_SERVICE_SID` | For phone verification | Twilio Verify service SID |
+| `MODERATOR_USER_IDS` | For dispute resolution | Comma-separated MongoDB user IDs permitted to review reports |
+| `PORT` | No | HTTP port; defaults to `3000` |
 
-> **Note:** A direct `mongodb://` URI is used instead of SRV because some home routers do not resolve SRV DNS records. Replace with your MongoDB Atlas connection string.
+Phone verification fails closed when Twilio Verify is not configured. Public production deployments must use a HTTPS-only `PUBLIC_API_URL` origin (no path), set the frontend origin allowlist, provision moderator IDs, and use a durable volume or external image store for `/uploads`; local disk storage is not suitable for ephemeral hosting. Never commit credentials.
 
----
+## Product and trust rules
 
-## API Reference
+- Registration requires a unique Bahrain phone number verified by Twilio and an adult attestation. Accounts start with 100 Eco-Credits, matching the existing product balance.
+- Listing requires 1–5 photos, honest item details, a confirmation checklist, and a pickup address and Bahrain map pin. Accepted credit values come from `config/credit-policy.js`, grouped by category and condition; brand, retail price, and claimed age do not raise the cap.
+- Public responses expose only approximate coordinates. Exact pickup details are withheld until owner approval and are returned only to the owner and swap participants.
+- Sample records are marked as demos and cannot be signed into or traded.
+- A request reserves credits and makes the listing unavailable. Approval creates an expiring, one-time handover code; settlement requires both the requester’s code confirmation and the owner’s confirmation. There is no automatic pickup bonus.
+- Messaging stays open while a swap is requested, approved, or disputed. A dispute pauses settlement for moderator review. Reviews are visible to both parties only after both submit.
+- Existing listings without valid root-level `pickupLocation` data are blocked from swap requests and approval. Legacy nested pickup data is removed from public responses. Back up and assess existing data before launch; there is no automatic legacy-data migration.
 
-### Auth `/auth`
+The community guidance is a product standard, not legal advice. Have privacy, consumer, age-verification, moderation, and data-retention terms reviewed locally in Bahrain before public launch.
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/auth/sign-up` | — | Register (returns JWT) |
-| POST | `/auth/sign-in` | — | Login (returns JWT) |
+## API overview
 
-**Sign-up body:**
-```json
-{
-  "username": "fatima_seef",
-  "password": "SecurePass1",
-  "neighborhood": "Seef",
-  "customNeighborhood": ""
-}
-```
-Usernames: 3–30 chars, alphanumeric + underscore. Password: 6–72 chars.
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/auth/phone/send-code` | Send Bahrain SMS verification code |
+| `POST` | `/auth/phone/verify-code` | Verify SMS code; returns signup proof or authenticated user/token |
+| `POST` | `/auth/sign-up`, `/auth/sign-in` | Create an adult, phone-verified account or sign in |
+| `GET` | `/policy/credits` | Return published credit bands and category mappings |
+| `GET` | `/items`, `/items/:id` | Browse or view listings; private pickup data is access-controlled |
+| `POST`, `PATCH`, `DELETE` | `/items`, `/items/:id` | Create, edit, and remove an owner’s available listing |
+| `POST` | `/upload` | Upload JPEG, PNG, or WEBP image (8 MB maximum) |
+| `POST` | `/swaps` | Request an item and reserve credits |
+| `GET` | `/swaps/mine` | Get the current user’s swaps and eligible private pickup details |
+| `PATCH` | `/swaps/:id/approve` | Owner approves and receives a one-time handover code |
+| `POST` | `/swaps/:id/confirm-handover`, `/swaps/:id/confirm-owner` | Record requester and owner confirmations; settle after both |
+| `POST` | `/swaps/:id/refresh-handover-code`, `/swaps/:id/cancel`, `/swaps/:id/dispute` | Refresh code, cancel/refund an eligible swap, or pause it for review |
+| `GET`, `POST` | `/swaps/:id/messages`, `/swaps/:id/reviews` | Participant conversation and mutual reviews |
+| `GET`, `POST` | `/swaps/moderation/disputes`, `/swaps/moderation/disputes/:id/resolve` | Moderator-only dispute queue and resolution |
+| `GET`, `PATCH` | `/users/me/profile`, `/users/me/location`, `/users/me/adult-confirmation` | Own profile and account verification |
+| `GET` | `/users/:id`, `/users/:id/items` | Public profile and listings without private pickup details |
 
----
+Listing payloads use `images` (array of uploaded URLs) and `pickupLocation` with `type`, `address`, `instructions`, and `[longitude, latitude]` coordinates. The complete item form and swap lifecycle are implemented in the connected frontend repository.
 
-### Items `/items`
+## Demo data
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/items` | — | Browse available items (paginated) |
-| GET | `/items/:id` | — | Single item detail |
-| POST | `/items` | ✓ | Create a listing |
-| PATCH | `/items/:id` | ✓ | Edit listing (owner, available only) |
-| DELETE | `/items/:id` | ✓ | Delete listing (owner only) |
-
-**Browse query params:**
-```
-?neighborhood=Juffair&category=tops&page=2&limit=12
-```
-Default: `page=1`, `limit=20`. Categories: `tops` `bottoms` `dresses` `outerwear` `footwear` `accessories` `kids` `other`.
-
----
-
-### Swaps `/swaps`
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/swaps` | ✓ | Request an item (spends credits) |
-| GET | `/swaps/mine` | ✓ | All swaps for logged-in user |
-| PATCH | `/swaps/:id/respond` | ✓ | Owner replies with a message |
-| PATCH | `/swaps/:id/approve` | ✓ | Owner approves pickup |
-| PATCH | `/swaps/:id/complete` | ✓ | Owner marks item as collected (+30 credits, badge check) |
-| PATCH | `/swaps/:id/cancel` | ✓ | Either party cancels (owner can include a reason) |
-
-**Swap lifecycle:**
-```
-requested → [owner replies] → approved → completed
-         ↘ cancelled (owner includes optional reason, credits refunded)
-```
-
----
-
-### Users `/users`
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/users/me/profile` | ✓ | Own profile + active listings |
-| PATCH | `/users/me/location` | ✓ | Update neighbourhood |
-| GET | `/users/:id` | — | Public profile |
-
----
-
-### Upload `/upload`
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/upload` | ✓ | Upload item photo |
-
-**Request:** `multipart/form-data`, field name `image`. Max 8 MB, images only.  
-**Response:** `{ "url": "http://localhost:3000/uploads/filename.jpg" }`  
-Uploaded files are served statically at `/uploads/*`.
-
----
-
-## Eco-Credit Economy
-
-| Event | Credits |
-|---|---|
-| Sign up | +100 |
-| Claim an item | −(item price, 0–50) |
-| Item picked up (as owner) | +30 |
-
-### Badges — awarded to givers
-
-| Badge | Items Given |
-|---|---|
-| 🌱 Eco Starter | 1 |
-| 🌿 Green Giver | 5 |
-| 🌍 Sustainability Hero | 15 |
-| 🏆 Bahrain Eco Champion | 30 |
-
----
-
-## Seed Data
-
-```bash
-node seed.js
-```
-
-Creates **38** Bahraini users spread across all governorates and **52** clothing items (abayas, kanduras, thobes, jalabiyas, Western wear, kids wear, footwear).  
-All seed users share the password: `Rewear2025`
-
----
-
-## Project Structure
-
-```
-controllers/
-  auth.routes.js      — sign-up / sign-in
-  items.routes.js     — item CRUD + paginated browse
-  swaps.routes.js     — full swap lifecycle with messaging
-  users.routes.js     — profile management
-  upload.routes.js    — multer photo upload
-middleware/
-  verify-token.js     — JWT auth guard
-models/
-  User.js             — user schema (40+ Bahrain neighbourhoods, badges)
-  Item.js             — item schema (GeoJSON location, 2dsphere index)
-  Swap.js             — swap schema (messaging, cancel reason, badges)
-uploads/              — uploaded images (auto-created on first upload)
-seed.js               — database seeder
-server.js             — Express entry point
-```
-
----
-
-*Inspired by Omar · Re-Wear Bahrain — keeping clothes in use, one neighbour at a time.*
+Run `node seed.js` only when you intend to create sample records in the configured database. Seed users and listings are explicitly marked as demos, display a sample image, and are read-only/non-tradeable. Use a non-production database for demos.

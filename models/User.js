@@ -27,6 +27,15 @@ const userSchema = new mongoose.Schema(
       minlength: 3,
       maxlength: 30,
     },
+    phoneNumber: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true
+    },
+    phoneVerifiedAt: { type: Date, default: null },
+    adultConfirmedAt: { type: Date, default: null },
+    isDemo: { type: Boolean, default: false },
     hashedPassword: {
       type: String,
       required: true
@@ -74,6 +83,7 @@ userSchema.index({ location: '2dsphere' });
 userSchema.set('toJSON', {
     transform: (document, returnedObject) => {
         delete returnedObject.hashedPassword;
+        delete returnedObject.phoneNumber;
     }
 });
 

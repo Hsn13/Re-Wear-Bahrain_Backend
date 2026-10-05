@@ -1,163 +1,226 @@
 const router = require('express').Router()
+const mongoose = require('mongoose')
 const Item = require('../models/Item')
+const Swap = require('../models/Swap')
 const User = require('../models/User')
 const verifyToken = require('../middleware/verify-token')
+const { getCreditBand, isCreditPriceAllowed } = require('../config/credit-policy')
+const approximateCoordinates = require('../utils/approximate-coordinates')
+const isValidBahrainCoordinates = require('../utils/bahrain-coordinates')
+const isValidImageUrl = require('../utils/valid-image-url')
+const isDemoItem = require('../utils/is-demo-item')
+const toPublicItem = require('../utils/public-item')
 
 const VALID_CATEGORIES = ['tops', 'bottoms', 'dresses', 'outerwear', 'footwear', 'accessories', 'kids', 'other']
 const VALID_CONDITIONS = ['new', 'like-new', 'good', 'fair']
 const VALID_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'One Size', 'Kids']
 
-// GET /items — browse available items
+function validateListing(body, req) {
+  const { title, description, category, size, condition, images, ecoCreditsPrice, pickupLocation, truthConfirmed } = body
+  if (typeof title !== 'string' || title.trim().length < 3 || title.trim().length > 100) {
+    return 'Title must be between 3 and 100 characters.'
+  }
+  if (typeof description !== 'string' || description.trim().length < 20 || description.trim().length > 500) {
+    return 'Describe the item honestly in 20–500 characters.'
+  }
+  if (!VALID_CATEGORIES.includes(category)) return 'Please select a valid category.'
+  if (!VALID_CONDITIONS.includes(condition)) return 'Please select a valid condition.'
+  if (size && !VALID_SIZES.includes(size)) return 'Please select a valid size.'
+  if (!Array.isArray(images) || images.length < 1 || images.length > 5 ||
+      images.some(url => !isValidImageUrl(
+        url,
+        process.env.PUBLIC_API_URL || `${req.protocol}://${req.get('host')}`,
+        process.env.NODE_ENV === 'production'
+      ))) {
+    return 'Add 1–5 clear item photos before publishing.'
+  }
+  const band = getCreditBand(category, condition)
+  if (!band || !isCreditPriceAllowed(category, condition, ecoCreditsPrice)) {
+    return `Choose a whole-number credit value between ${band?.[0] ?? 1} and ${band?.[1] ?? 0} for this item condition.`
+  }
+  if (!pickupLocation || !['public', 'private'].includes(pickupLocation.type) ||
+      typeof pickupLocation.address !== 'string' || pickupLocation.address.trim().length < 5 ||
+      pickupLocation.address.trim().length > 240 || !isValidBahrainCoordinates(pickupLocation.coordinates)) {
+    return 'Choose a precise Bahrain pickup point and provide its address or public meetup name.'
+  }
+  if (typeof pickupLocation.instructions !== 'string' || pickupLocation.instructions.length > 500) {
+    return 'Pickup instructions must be 500 characters or fewer.'
+  }
+  if (truthConfirmed !== true) {
+    return 'Confirm that the photos, condition, cleanliness, and item details are accurate.'
+  }
+  return null
+}
+
 router.get('/', async (req, res) => {
   try {
-    const { neighborhood, category, page = 1, limit = 20 } = req.query
+    const page = Math.max(1, Math.floor(Number(req.query.page) || 1))
+    const limit = Math.min(48, Math.max(1, Math.floor(Number(req.query.limit) || 12)))
     const filter = { status: 'available' }
-    if (neighborhood) filter['location.neighborhood'] = neighborhood
-    if (category) filter.category = category
+    if (req.query.neighborhood) filter['location.neighborhood'] = req.query.neighborhood
+    if (req.query.category) {
+      if (!VALID_CATEGORIES.includes(req.query.category)) {
+        return res.status(400).json({ err: 'Unknown category.' })
+      }
+      filter.category = req.query.category
+    }
 
-    const items = await Item.find(filter)
-      .populate('owner', 'username location')
-      .sort({ createdAt: -1 })
-      .skip((Number(page) - 1) * Number(limit))
-      .limit(Number(limit))
-
-    const total = await Item.countDocuments(filter)
-    res.json({ items, total })
-  } catch (err) {
-    res.status(500).json({ err: err.message })
+    const [items, total] = await Promise.all([
+      Item.find(filter)
+        .select('-pickupLocation')
+        .populate('owner', 'username location.neighborhood location.customNeighborhood isDemo')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      Item.countDocuments(filter)
+    ])
+    const publicItems = items.map(item => {
+      const result = toPublicItem(item)
+      if (result.location) {
+        result.location.coordinates = approximateCoordinates(result.location.coordinates)
+      }
+      return result
+    })
+    res.json({ items: publicItems, total, page, limit })
+  } catch {
+    res.status(500).json({ err: 'Could not load listings.' })
   }
 })
 
-// GET /items/:id — single item detail
 router.get('/:id', async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ err: 'Item not found.' })
   try {
     const item = await Item.findById(req.params.id)
-      .populate('owner', 'username location badges ecoCredits')
-    if (!item) return res.status(404).json({ err: 'Item not found' })
-    res.json({ item })
-  } catch (err) {
-    res.status(500).json({ err: err.message })
+      .populate('owner', 'username location.neighborhood location.customNeighborhood badges itemsGivenCount isDemo')
+    if (!item) return res.status(404).json({ err: 'Item not found.' })
+
+    const result = toPublicItem(item)
+    if (result.location) {
+      result.location.coordinates = approximateCoordinates(result.location.coordinates)
+    }
+    let viewerId = null
+    const authorization = req.headers.authorization
+    if (authorization) {
+      try {
+        const jwt = require('jsonwebtoken')
+        viewerId = jwt.verify(authorization.split(' ')[1], process.env.JWT_SECRET)?.payload?._id
+      } catch {
+        viewerId = null
+      }
+    }
+    const isOwner = viewerId && item.owner?._id?.toString() === String(viewerId)
+    const activeSwap = viewerId && await Swap.findOne({
+      item: item._id,
+      status: { $in: ['approved', 'disputed'] },
+      $or: [{ requester: viewerId }, { owner: viewerId }]
+    }).select('_id')
+    if (isOwner || activeSwap) result.pickupLocation = item.pickupLocation
+    res.json({ item: result })
+  } catch {
+    res.status(500).json({ err: 'Could not load this listing.' })
   }
 })
 
-// POST /items — create a new listing (protected)
 router.post('/', verifyToken, async (req, res) => {
   try {
-    const { title, description, category, size, condition, images, ecoCreditsPrice, tags } = req.body
-
-    if (!title || title.trim().length < 3) {
-      return res.status(400).json({ err: 'Title must be at least 3 characters' })
-    }
-    if (title.trim().length > 100) {
-      return res.status(400).json({ err: 'Title must be 100 characters or fewer' })
-    }
-    if (!category || !VALID_CATEGORIES.includes(category)) {
-      return res.status(400).json({ err: 'Please select a valid category' })
-    }
-    if (!condition || !VALID_CONDITIONS.includes(condition)) {
-      return res.status(400).json({ err: 'Please select a valid condition' })
-    }
-    if (size && !VALID_SIZES.includes(size)) {
-      return res.status(400).json({ err: 'Please select a valid size' })
-    }
-    if (ecoCreditsPrice !== undefined) {
-      const price = Number(ecoCreditsPrice)
-      if (isNaN(price) || price < 0 || price > 50) {
-        return res.status(400).json({ err: 'Credits to claim must be between 0 and 50' })
-      }
-    }
-
     const owner = await User.findById(req.user._id)
-    if (!owner) return res.status(404).json({ err: 'User not found' })
+    if (!owner) return res.status(404).json({ err: 'User not found.' })
+    if (!owner.phoneVerifiedAt || !owner.adultConfirmedAt) {
+      return res.status(403).json({ err: 'Verify your phone and confirm you are 18 or older before listing.' })
+    }
+    const issue = validateListing(req.body, req)
+    if (issue) return res.status(400).json({ err: issue })
 
     const item = await Item.create({
       owner: owner._id,
-      title: title.trim(),
-      description: description ? description.trim() : '',
-      category,
-      size: size || undefined,
-      condition,
-      images: Array.isArray(images) ? images.filter(Boolean) : [],
-      ecoCreditsPrice: ecoCreditsPrice !== undefined ? Number(ecoCreditsPrice) : 10,
-      tags: Array.isArray(tags) ? tags : [],
-      location: owner.location
+      title: req.body.title.trim(),
+      description: req.body.description.trim(),
+      category: req.body.category,
+      size: req.body.size || undefined,
+      condition: req.body.condition,
+      images: req.body.images,
+      ecoCreditsPrice: Number(req.body.ecoCreditsPrice),
+      location: {
+        type: 'Point',
+        coordinates: req.body.pickupLocation.coordinates.map(value => Math.round(Number(value) * 100) / 100),
+        neighborhood: owner.location.neighborhood,
+        ...(owner.location.customNeighborhood ? { customNeighborhood: owner.location.customNeighborhood } : {})
+      },
+      pickupLocation: {
+        ...req.body.pickupLocation,
+        address: req.body.pickupLocation.address.trim(),
+        instructions: req.body.pickupLocation.instructions.trim()
+      },
+      isDemo: false
     })
-
     res.status(201).json({ item })
-  } catch (err) {
-    res.status(500).json({ err: err.message })
+  } catch {
+    res.status(500).json({ err: 'Could not create listing.' })
   }
 })
 
-// PATCH /items/:id — edit listing (owner only, available items only)
 router.patch('/:id', verifyToken, async (req, res) => {
   try {
     const item = await Item.findById(req.params.id)
-    if (!item) return res.status(404).json({ err: 'Item not found' })
-    if (item.owner.toString() !== req.user._id) {
-      return res.status(403).json({ err: 'Not authorized' })
-    }
-    if (item.status !== 'available') {
-      return res.status(400).json({ err: 'Only available items can be edited' })
-    }
+    if (!item) return res.status(404).json({ err: 'Item not found.' })
+    if (item.owner.toString() !== String(req.user._id)) return res.status(403).json({ err: 'Not authorized.' })
+    if (item.status !== 'available') return res.status(409).json({ err: 'Only available listings can be edited.' })
+    if (isDemoItem(item)) return res.status(403).json({ err: 'Demo listings cannot be edited.' })
 
-    const { title, description, category, size, condition, images, ecoCreditsPrice } = req.body
+    const candidate = {
+      title: req.body.title ?? item.title,
+      description: req.body.description ?? item.description,
+      category: req.body.category ?? item.category,
+      size: req.body.size ?? item.size,
+      condition: req.body.condition ?? item.condition,
+      images: req.body.images ?? item.images,
+      ecoCreditsPrice: req.body.ecoCreditsPrice ?? item.ecoCreditsPrice,
+      pickupLocation: req.body.pickupLocation ?? item.pickupLocation,
+      truthConfirmed: req.body.truthConfirmed
+    }
+    const issue = validateListing(candidate, req)
+    if (issue) return res.status(400).json({ err: issue })
 
-    if (title !== undefined) {
-      if (!title.trim() || title.trim().length < 3) {
-        return res.status(400).json({ err: 'Title must be at least 3 characters' })
-      }
-      if (title.trim().length > 100) {
-        return res.status(400).json({ err: 'Title must be 100 characters or fewer' })
-      }
-    }
-    if (category !== undefined && !VALID_CATEGORIES.includes(category)) {
-      return res.status(400).json({ err: 'Please select a valid category' })
-    }
-    if (condition !== undefined && !VALID_CONDITIONS.includes(condition)) {
-      return res.status(400).json({ err: 'Please select a valid condition' })
-    }
-    if (size !== undefined && size && !VALID_SIZES.includes(size)) {
-      return res.status(400).json({ err: 'Please select a valid size' })
-    }
-    if (ecoCreditsPrice !== undefined) {
-      const price = Number(ecoCreditsPrice)
-      if (isNaN(price) || price < 0 || price > 50) {
-        return res.status(400).json({ err: 'Credits to claim must be between 0 and 50' })
-      }
-    }
-
-    const updates = {}
-    if (title !== undefined)          updates.title = title.trim()
-    if (description !== undefined)    updates.description = description.trim()
-    if (category !== undefined)       updates.category = category
-    if (size !== undefined)           updates.size = size
-    if (condition !== undefined)      updates.condition = condition
-    if (Array.isArray(images))        updates.images = images.filter(Boolean)
-    if (ecoCreditsPrice !== undefined) updates.ecoCreditsPrice = Number(ecoCreditsPrice)
-
-    const updated = await Item.findByIdAndUpdate(req.params.id, updates, { new: true })
+    const updated = await Item.findOneAndUpdate(
+      { _id: item._id, owner: req.user._id, status: 'available' },
+      {
+        $set: {
+          title: candidate.title.trim(),
+          description: candidate.description.trim(),
+          category: candidate.category,
+          size: candidate.size || undefined,
+          condition: candidate.condition,
+          images: candidate.images,
+          ecoCreditsPrice: Number(candidate.ecoCreditsPrice),
+          pickupLocation: {
+            ...candidate.pickupLocation,
+            address: candidate.pickupLocation.address.trim(),
+            instructions: candidate.pickupLocation.instructions.trim()
+          }
+        }
+      },
+      { new: true, runValidators: true }
+    )
+    if (!updated) return res.status(409).json({ err: 'Listing changed while you were editing. Reload and try again.' })
     res.json({ item: updated })
-  } catch (err) {
-    res.status(500).json({ err: err.message })
+  } catch {
+    res.status(500).json({ err: 'Could not save listing changes.' })
   }
 })
 
-// DELETE /items/:id — delete listing (owner only)
 router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const item = await Item.findById(req.params.id)
-    if (!item) return res.status(404).json({ err: 'Item not found' })
-    if (item.owner.toString() !== req.user._id) {
-      return res.status(403).json({ err: 'Not authorized' })
+    if (!item) return res.status(404).json({ err: 'Item not found.' })
+    if (item.owner.toString() !== String(req.user._id)) return res.status(403).json({ err: 'Not authorized.' })
+    if (item.status !== 'available') {
+      return res.status(409).json({ err: 'A requested or completed listing cannot be deleted.' })
     }
-    if (item.status === 'pending') {
-      return res.status(400).json({ err: 'Cannot delete an item with a pending swap request' })
-    }
+    if (isDemoItem(item)) return res.status(403).json({ err: 'Demo listings cannot be deleted.' })
     await item.deleteOne()
-    res.json({ message: 'Item deleted' })
-  } catch (err) {
-    res.status(500).json({ err: err.message })
+    res.json({ message: 'Listing deleted.' })
+  } catch {
+    res.status(500).json({ err: 'Could not delete listing.' })
   }
 })
 

@@ -3,6 +3,7 @@ const mongoose = require('mongoose')
 const bcrypt = require('bcrypt')
 const User = require('./models/User')
 const Item = require('./models/Item')
+const { getCreditBand } = require('./config/credit-policy')
 
 const HASHED_PW = bcrypt.hashSync('Rewear2025', 10)
 
@@ -148,6 +149,28 @@ async function seed() {
   await mongoose.connect(process.env.MONGODB_URI)
   console.log('Connected to MongoDB')
 
+  const demoUsernames = USERS_DATA.map(user => user.username)
+  const demoImage = `${(process.env.PUBLIC_API_URL || 'http://localhost:3000').replace(/\/$/, '')}/uploads/demo-clothing.svg`
+  await User.updateMany({ username: { $in: demoUsernames } }, { $set: { isDemo: true } })
+  const existingDemoUsers = await User.find({ username: { $in: demoUsernames } }).select('_id location')
+  await Promise.all(existingDemoUsers.map(user =>
+    Item.updateMany(
+      { owner: user._id },
+      {
+        $set: {
+          isDemo: true,
+          images: [demoImage],
+          pickupLocation: {
+            type: 'public',
+            coordinates: user.location.coordinates,
+            address: `Sample meetup point · ${user.location.neighborhood}`,
+            instructions: 'Sample listing only. This is not a real pickup address.'
+          }
+        }
+      }
+    )
+  ))
+
   let usersCreated = 0
   let itemsCreated = 0
   let skipped = 0
@@ -159,6 +182,7 @@ async function seed() {
         username: ud.username,
         hashedPassword: HASHED_PW,
         ecoCredits: 100,
+        isDemo: true,
         location: {
           type: 'Point',
           coordinates: ud.coordinates,
@@ -185,10 +209,25 @@ async function seed() {
     const selected = shufflePool().slice(0, numItems)
     for (const itemData of selected) {
       try {
+        const band = getCreditBand(itemData.category, itemData.condition)
+        const ecoCreditsPrice = Math.max(band[0], Math.min(band[1], itemData.ecoCreditsPrice))
         await Item.create({
           ...itemData,
+          ecoCreditsPrice,
           owner: user._id,
-          location: user.location,
+          images: [demoImage],
+          location: {
+            type: 'Point',
+            coordinates: user.location.coordinates.map(value => Math.round(value * 100) / 100),
+            neighborhood: user.location.neighborhood
+          },
+          pickupLocation: {
+            type: 'public',
+            coordinates: user.location.coordinates,
+            address: `Sample meetup point · ${user.location.neighborhood}`,
+            instructions: 'Sample listing only. This is not a real pickup address.'
+          },
+          isDemo: true,
         })
         itemsCreated++
       } catch (err) {
@@ -201,7 +240,6 @@ async function seed() {
   console.log(`  Users created : ${usersCreated}`)
   console.log(`  Users skipped : ${skipped}`)
   console.log(`  Items created : ${itemsCreated}`)
-  console.log(`\nAll seed users have password: Rewear2025`)
   await mongoose.disconnect()
 }
 

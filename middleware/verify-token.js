@@ -1,24 +1,26 @@
-// middleware/verify-token.js
+const jwt = require('jsonwebtoken')
+const User = require('../models/User')
 
-// We'll need to import jwt to use the verify method
-const jwt = require('jsonwebtoken');
-
-function verifyToken(req, res, next) {
+async function verifyToken(req, res, next) {
   try {
-    const token = req.headers.authorization.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    // Assign decoded payload to req.user
-    console.log(decoded)
-    req.user = decoded.payload;
-
-    // Call next() to invoke the next middleware function
-    next();
+    const authorization = req.headers.authorization || ''
+    if (!authorization.startsWith('Bearer ')) {
+      return res.status(401).json({ err: 'Authentication required.' })
+    }
+    const decoded = jwt.verify(authorization.slice(7), process.env.JWT_SECRET)
+    const user = await User.findById(decoded.payload?._id)
+      .select('_id username ecoCredits badges phoneVerifiedAt adultConfirmedAt isDemo')
+    if (!user || user.isDemo) {
+      return res.status(401).json({ err: 'Account is not authorized to use this service.' })
+    }
+    req.user = user
+    return next()
   } catch (err) {
-    // If any errors, send back a 401 status and an 'Invalid token.' error message
-    res.status(401).json({ err: 'Invalid token.' });
+    if (['JsonWebTokenError', 'TokenExpiredError'].includes(err.name)) {
+      return res.status(401).json({ err: 'Your session is invalid or expired. Please sign in again.' })
+    }
+    return res.status(500).json({ err: 'Could not verify your session.' })
   }
 }
 
-// We'll need to export this function to use it in our controller files
-module.exports = verifyToken;
+module.exports = verifyToken
