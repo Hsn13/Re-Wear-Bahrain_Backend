@@ -14,6 +14,10 @@ const uploadRouter = require('./controllers/upload.routes')
 const policyRouter = require('./controllers/policy.routes')
 
 const app = express()
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1)
+}
+
 const allowedOrigins = (process.env.CLIENT_ORIGINS || 'http://localhost:5173')
   .split(',')
   .map(origin => origin.trim())

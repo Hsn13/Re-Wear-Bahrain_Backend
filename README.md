@@ -30,7 +30,7 @@ Set these values in the deployment environment or a local, untracked `.env` file
 | `MODERATOR_USER_IDS` | For dispute resolution | Comma-separated MongoDB user IDs permitted to review reports |
 | `PORT` | No | HTTP port; defaults to `3000` |
 
-Phone verification fails closed when Twilio Verify is not configured. Public production deployments must use a HTTPS-only `PUBLIC_API_URL` origin (no path), set the frontend origin allowlist, provision moderator IDs, and use a durable volume or external image store for `/uploads`; local disk storage is not suitable for ephemeral hosting. Never commit credentials.
+Phone verification fails closed when Twilio Verify is not configured. Production trusts one reverse-proxy hop for client IP handling and rate limits (as on Render). Public production deployments must use a HTTPS-only `PUBLIC_API_URL` origin (no path), set the frontend origin allowlist, provision moderator IDs, and use a durable volume or external image store for `/uploads`; local disk storage is not suitable for ephemeral hosting. Never commit credentials.
 
 ## Product and trust rules
 
