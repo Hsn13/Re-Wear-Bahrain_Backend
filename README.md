@@ -24,17 +24,14 @@ Set these values in the deployment environment or a local, untracked `.env` file
 | `JWT_SECRET` | Yes | Signing key of at least 32 characters |
 | `CLIENT_ORIGINS` | Production | Comma-separated exact frontend origins; defaults to `http://localhost:5173` |
 | `PUBLIC_API_URL` | Production | Public HTTPS API origin used to generate upload URLs |
-| `TWILIO_ACCOUNT_SID` | For phone verification | Twilio account SID |
-| `TWILIO_AUTH_TOKEN` | For phone verification | Twilio auth token |
-| `TWILIO_VERIFY_SERVICE_SID` | For phone verification | Twilio Verify service SID |
 | `MODERATOR_USER_IDS` | For dispute resolution | Comma-separated MongoDB user IDs permitted to review reports |
 | `PORT` | No | HTTP port; defaults to `3000` |
 
-Phone verification fails closed when Twilio Verify is not configured. Production trusts one reverse-proxy hop for client IP handling and rate limits (as on Render). Public production deployments must use a HTTPS-only `PUBLIC_API_URL` origin (no path), set the frontend origin allowlist, provision moderator IDs, and use a durable volume or external image store for `/uploads`; local disk storage is not suitable for ephemeral hosting. Never commit credentials.
+Production signup and trading require an adult self-attestation; phone verification is not used, avoiding paid SMS services. This lowers account identity assurance, so retain the rate limits and transaction safeguards. Production trusts one reverse-proxy hop for client IP handling and rate limits (as on Render). Public production deployments must use a HTTPS-only `PUBLIC_API_URL` origin (no path), set the frontend origin allowlist, provision moderator IDs, and use a durable volume or external image store for `/uploads`; local disk storage is not suitable for ephemeral hosting. Never commit credentials.
 
 ## Product and trust rules
 
-- Registration requires a unique Bahrain phone number verified by Twilio and an adult attestation. Accounts start with 100 Eco-Credits, matching the existing product balance.
+- Registration requires an adult self-attestation. Accounts start with 100 Eco-Credits, matching the existing product balance.
 - Listing requires 1–5 photos, honest item details, a confirmation checklist, and a pickup address and Bahrain map pin. Accepted credit values come from `config/credit-policy.js`, grouped by category and condition; brand, retail price, and claimed age do not raise the cap.
 - Public responses expose only approximate coordinates. Exact pickup details are withheld until owner approval and are returned only to the owner and swap participants.
 - Sample records are marked as demos and cannot be signed into or traded.
@@ -48,9 +45,7 @@ The community guidance is a product standard, not legal advice. Have privacy, co
 
 | Method | Route | Description |
 |---|---|---|
-| `POST` | `/auth/phone/send-code` | Send Bahrain SMS verification code |
-| `POST` | `/auth/phone/verify-code` | Verify SMS code; returns signup proof or authenticated user/token |
-| `POST` | `/auth/sign-up`, `/auth/sign-in` | Create an adult, phone-verified account or sign in |
+| `POST` | `/auth/sign-up`, `/auth/sign-in` | Create an adult-confirmed account or sign in |
 | `GET` | `/policy/credits` | Return published credit bands and category mappings |
 | `GET` | `/items`, `/items/:id` | Browse or view listings; private pickup data is access-controlled |
 | `POST`, `PATCH`, `DELETE` | `/items`, `/items/:id` | Create, edit, and remove an owner’s available listing |

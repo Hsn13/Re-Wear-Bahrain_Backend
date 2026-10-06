@@ -9,7 +9,7 @@ async function verifyToken(req, res, next) {
     }
     const decoded = jwt.verify(authorization.slice(7), process.env.JWT_SECRET)
     const user = await User.findById(decoded.payload?._id)
-      .select('_id username ecoCredits badges phoneVerifiedAt adultConfirmedAt isDemo')
+      .select('_id username ecoCredits badges adultConfirmedAt isDemo')
     if (!user || user.isDemo) {
       return res.status(401).json({ err: 'Account is not authorized to use this service.' })
     }

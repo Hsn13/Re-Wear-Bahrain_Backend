@@ -45,13 +45,6 @@ const authLimiter = rateLimit({
   standardHeaders: 'draft-8',
   legacyHeaders: false
 })
-app.use('/auth/phone/send-code', rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 4,
-  standardHeaders: 'draft-8',
-  legacyHeaders: false
-}))
-app.use('/auth/phone/verify-code', authLimiter)
 app.use('/auth/sign-in', authLimiter)
 app.use('/auth/sign-up', rateLimit({
   windowMs: 60 * 60 * 1000,

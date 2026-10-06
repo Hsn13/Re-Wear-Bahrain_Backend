@@ -7,7 +7,6 @@ module.exports = function createUserToken(user) {
       username: user.username,
       ecoCredits: user.ecoCredits,
       badges: user.badges,
-      phoneVerifiedAt: user.phoneVerifiedAt,
       adultConfirmedAt: user.adultConfirmedAt
     }
   }, process.env.JWT_SECRET, { expiresIn: '24h' })

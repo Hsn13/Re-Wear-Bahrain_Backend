@@ -125,8 +125,8 @@ router.post('/', verifyToken, async (req, res) => {
   try {
     const owner = await User.findById(req.user._id)
     if (!owner) return res.status(404).json({ err: 'User not found.' })
-    if (!owner.phoneVerifiedAt || !owner.adultConfirmedAt) {
-      return res.status(403).json({ err: 'Verify your phone and confirm you are 18 or older before listing.' })
+    if (!owner.adultConfirmedAt) {
+      return res.status(403).json({ err: 'Confirm you are 18 or older before listing.' })
     }
     const issue = validateListing(req.body, req)
     if (issue) return res.status(400).json({ err: issue })

@@ -21,14 +21,6 @@ const {
 const isParticipant = (swap, userId) =>
   [swap.requester.toString(), swap.owner.toString()].includes(String(userId))
 
-function rejectUnverified(user, res) {
-  if (!user?.phoneVerifiedAt) {
-    res.status(403).json({ err: 'Verify your phone number before trading.' })
-    return true
-  }
-  return false
-}
-
 async function finishIfConfirmed(swap, session) {
   if (swap.requesterConfirmedAt && swap.ownerConfirmedAt) {
     return settleSwap(swap, session)
@@ -49,9 +41,8 @@ router.post('/', verifyToken, async (req, res) => {
   let session
   try {
     const requester = await User.findById(req.user._id)
-    if (rejectUnverified(requester, res)) return
     if (requester.adultConfirmedAt == null) {
-      return res.status(403).json({ err: 'Only verified adult accounts can trade.' })
+      return res.status(403).json({ err: 'Confirm you are 18 or older before trading.' })
     }
 
     session = await mongoose.startSession()
@@ -68,7 +59,7 @@ router.post('/', verifyToken, async (req, res) => {
       }
 
       const owner = await User.findById(item.owner).session(session)
-      if (!owner?.phoneVerifiedAt || !owner.adultConfirmedAt) {
+      if (!owner?.adultConfirmedAt) {
         throw Object.assign(new Error('The owner is not eligible to trade yet.'), { status: 409 })
       }
       if (owner.isDemo) throw Object.assign(new Error('Demo listings cannot be claimed.'), { status: 400 })
@@ -220,11 +211,10 @@ router.post('/:id/messages', verifyToken, async (req, res) => {
 })
 
 router.patch('/:id/approve', verifyToken, async (req, res) => {
-  if (rejectUnverified(req.user, res)) return
   try {
     const owner = await User.findById(req.user._id)
-    if (!owner?.phoneVerifiedAt || !owner.adultConfirmedAt) {
-      return res.status(403).json({ err: 'Verify your adult account before approving swaps.' })
+    if (!owner?.adultConfirmedAt) {
+      return res.status(403).json({ err: 'Confirm you are 18 or older before approving swaps.' })
     }
     const pendingSwap = await Swap.findOne({
       _id: req.params.id,
